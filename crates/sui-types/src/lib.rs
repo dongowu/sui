@@ -68,6 +68,7 @@ pub mod messages_consensus;
 pub mod messages_grpc;
 pub mod messages_safe_client;
 pub mod metrics;
+pub mod mock;
 pub mod mock_checkpoint_builder;
 pub mod move_package;
 pub mod multisig;
@@ -207,6 +208,10 @@ pub fn resolve_address(addr: &str) -> Option<AccountAddress> {
 
 pub trait MoveTypeTagTrait {
     fn get_type_tag() -> TypeTag;
+
+    fn get_instance_type_tag(&self) -> TypeTag {
+        Self::get_type_tag()
+    }
 }
 
 impl MoveTypeTagTrait for u8 {
