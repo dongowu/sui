@@ -14586,6 +14586,7 @@ dependencies = [
  "datatest-stable",
  "diesel",
  "diesel-async",
+ "fastcrypto",
  "jsonrpsee",
  "move-core-types",
  "msim",
