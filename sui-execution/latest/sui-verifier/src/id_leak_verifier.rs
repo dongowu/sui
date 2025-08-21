@@ -69,7 +69,7 @@ const OBJECT_NEW_UID_FROM_HASH: FunctionIdent = (
 const OBJECT_NEW_DERIVED: FunctionIdent = (
     &SUI_FRAMEWORK_ADDRESS,
     ident_str!("derived_object"),
-    ident_str!("new"),
+    ident_str!("claim"),
 );
 const TS_NEW_OBJECT: FunctionIdent = (
     &SUI_FRAMEWORK_ADDRESS,
