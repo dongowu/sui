@@ -21,8 +21,8 @@ fun create_derived_id() {
     let derived_id = derived_object::derive_address(registry.id.to_inner(), key);
     let another_derived_id = derived_object::derive_address(registry.id.to_inner(), another_key);
 
-    let derived_uid = registry.id.derive_object(key);
-    let another_derived_uid = registry.id.derive_object(another_key);
+    let derived_uid = derived_object::claim(&mut registry.id, key);
+    let another_derived_uid = derived_object::claim(&mut registry.id, another_key);
 
     assert!(derived_object::exists(&registry.id, key));
     assert!(derived_object::exists(&registry.id, another_key));
@@ -43,8 +43,8 @@ fun multiple_registries_uniqueness() {
 
     let key = b"demo".to_string();
 
-    let derived_uid = registry.id.derive_object(key);
-    let another_derived_uid = another_registry.id.derive_object(key);
+    let derived_uid = derived_object::claim(&mut registry.id, key);
+    let another_derived_uid = derived_object::claim(&mut another_registry.id, key);
 
     assert!(derived_uid.to_address() != another_derived_uid.to_address());
 
@@ -60,7 +60,7 @@ fun test_marker_exists_even_after_deletion() {
     let mut registry = Registry { id: ctx.new() };
 
     let key = b"persist_test".to_string();
-    let derived_uid = registry.id.derive_object(key);
+    let derived_uid = derived_object::claim(&mut registry.id, key);
 
     assert!(derived_object::exists(&registry.id, key));
 
@@ -122,6 +122,21 @@ fun test_similar_keys_different_addresses_2() {
     destroy(registry);
 }
 
+// Tries to return an object to a different parent than the one that created it.addr1
+#[test, expected_failure(abort_code = derived_object::EInvalidParent)]
+fun try_to_restore_id_with_invalid_parent() {
+    let mut ctx = tx_context::dummy();
+    let mut parent_uid = object::new(&mut ctx);
+    let mut another_parent_uid = object::new(&mut ctx);
+
+    let key = b"demo".to_string();
+    let uid = derived_object::claim(&mut parent_uid, key);
+
+    derived_object::restore(&mut another_parent_uid, uid);
+
+    abort
+}
+
 #[test, expected_failure(abort_code = derived_object::EObjectAlreadyExists)]
 fun try_to_claim_id_twice() {
     let mut ctx = tx_context::dummy();
@@ -129,8 +144,8 @@ fun try_to_claim_id_twice() {
     let mut registry = Registry { id: object::new(&mut ctx) };
     let key = b"demo".to_string();
 
-    let _uid = registry.id.derive_object(key);
-    let _another_uid = registry.id.derive_object(key);
+    let _uid = derived_object::claim(&mut registry.id, key);
+    let _another_uid = derived_object::claim(&mut registry.id, key);
 
     abort
 }

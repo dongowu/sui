@@ -19,7 +19,8 @@ which derived addresses have been claimed to prevent duplicates.
 -  [Struct `Claimed`](#sui_derived_object_Claimed)
 -  [Struct `DerivedObjectKey`](#sui_derived_object_DerivedObjectKey)
 -  [Constants](#@Constants_0)
--  [Function `new`](#sui_derived_object_new)
+-  [Function `claim`](#sui_derived_object_claim)
+-  [Function `restore`](#sui_derived_object_restore)
 -  [Function `exists`](#sui_derived_object_exists)
 -  [Function `derive_address`](#sui_derived_object_derive_address)
 
@@ -107,14 +108,34 @@ Tries to create an object twice with the same parent-key combination.
 
 
 
-<a name="sui_derived_object_new"></a>
+<a name="sui_derived_object_EInvalidParent"></a>
 
-## Function `new`
+Tries to restore an object that does not exist for the supplied parent.
+
+
+<pre><code><b>const</b> <a href="../sui/derived_object.md#sui_derived_object_EInvalidParent">EInvalidParent</a>: u64 = 1;
+</code></pre>
+
+
+
+<a name="sui_derived_object_ENotSupported"></a>
+
+Tries to use functionality that is not supported yet.
+
+
+<pre><code><b>const</b> <a href="../sui/derived_object.md#sui_derived_object_ENotSupported">ENotSupported</a>: u64 = 2;
+</code></pre>
+
+
+
+<a name="sui_derived_object_claim"></a>
+
+## Function `claim`
 
 Claim a deterministic UID, using the parent's UID & any key.
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="../sui/derived_object.md#sui_derived_object_new">new</a>&lt;K: <b>copy</b>, drop, store&gt;(parent: &<b>mut</b> <a href="../sui/object.md#sui_object_UID">sui::object::UID</a>, key: K): <a href="../sui/object.md#sui_object_UID">sui::object::UID</a>
+<pre><code><b>public</b> <b>fun</b> <a href="../sui/derived_object.md#sui_derived_object_claim">claim</a>&lt;K: <b>copy</b>, drop, store&gt;(parent: &<b>mut</b> <a href="../sui/object.md#sui_object_UID">sui::object::UID</a>, key: K): <a href="../sui/object.md#sui_object_UID">sui::object::UID</a>
 </code></pre>
 
 
@@ -123,13 +144,55 @@ Claim a deterministic UID, using the parent's UID & any key.
 <summary>Implementation</summary>
 
 
-<pre><code><b>public</b> <b>fun</b> <a href="../sui/derived_object.md#sui_derived_object_new">new</a>&lt;K: <b>copy</b> + drop + store&gt;(parent: &<b>mut</b> UID, key: K): UID {
+<pre><code><b>public</b> <b>fun</b> <a href="../sui/derived_object.md#sui_derived_object_claim">claim</a>&lt;K: <b>copy</b> + drop + store&gt;(parent: &<b>mut</b> UID, key: K): UID {
     <b>let</b> addr = <a href="../sui/derived_object.md#sui_derived_object_derive_address">derive_address</a>(parent.to_inner(), key);
     <b>let</b> id = addr.to_id();
-    <b>assert</b>!(!df::exists_(parent, <a href="../sui/derived_object.md#sui_derived_object_Claimed">Claimed</a>(id)), <a href="../sui/derived_object.md#sui_derived_object_EObjectAlreadyExists">EObjectAlreadyExists</a>);
-    <b>let</b> uid = <a href="../sui/object.md#sui_object_new_uid_from_hash">object::new_uid_from_hash</a>(addr);
-    df::add(parent, <a href="../sui/derived_object.md#sui_derived_object_Claimed">Claimed</a>(id), <b>true</b>);
-    uid
+    // If the UID <b>has</b> never been claimed, we can generate it and <b>return</b> early.
+    <b>if</b> (!df::exists_(parent, <a href="../sui/derived_object.md#sui_derived_object_Claimed">Claimed</a>(id))) {
+        <b>let</b> uid = <a href="../sui/object.md#sui_object_new_uid_from_hash">object::new_uid_from_hash</a>(addr);
+        // We save the value <b>as</b> `Option&lt;UID&gt;` to allow us to have "<a href="../sui/derived_object.md#sui_derived_object_restore">restore</a>" functionality <b>for</b>
+        // a derived UID.
+        df::add&lt;_, Option&lt;UID&gt;&gt;(parent, <a href="../sui/derived_object.md#sui_derived_object_Claimed">Claimed</a>(id), option::none());
+        <b>return</b> uid
+    };
+    // IF the UID <b>has</b> been restored, we can re-<b>use</b> it.
+    <b>let</b> existing_uid = df::borrow_mut&lt;_, Option&lt;UID&gt;&gt;(parent, <a href="../sui/derived_object.md#sui_derived_object_Claimed">Claimed</a>(id));
+    <b>assert</b>!(existing_uid.is_some(), <a href="../sui/derived_object.md#sui_derived_object_EObjectAlreadyExists">EObjectAlreadyExists</a>);
+    <b>abort</b> <a href="../sui/derived_object.md#sui_derived_object_ENotSupported">ENotSupported</a>
+    // TODO: Enable once id leak verifier <b>has</b> been removed
+    // existing_uid.extract()
+}
+</code></pre>
+
+
+
+</details>
+
+<a name="sui_derived_object_restore"></a>
+
+## Function `restore`
+
+Return a <code>UID</code>, making it reclaimable in the future.
+Note: This is not yet supported.
+TODO: Should we make this public(package) or internal until we are indeed able to support
+reclaims?
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="../sui/derived_object.md#sui_derived_object_restore">restore</a>(parent: &<b>mut</b> <a href="../sui/object.md#sui_object_UID">sui::object::UID</a>, uid: <a href="../sui/object.md#sui_object_UID">sui::object::UID</a>)
+</code></pre>
+
+
+
+<details>
+<summary>Implementation</summary>
+
+
+<pre><code><b>public</b> <b>fun</b> <a href="../sui/derived_object.md#sui_derived_object_restore">restore</a>(parent: &<b>mut</b> UID, uid: UID) {
+    <b>let</b> id = uid.to_inner();
+    <b>assert</b>!(df::exists_(parent, <a href="../sui/derived_object.md#sui_derived_object_Claimed">Claimed</a>(id)), <a href="../sui/derived_object.md#sui_derived_object_EInvalidParent">EInvalidParent</a>);
+    <b>let</b> claimed: &<b>mut</b> Option&lt;UID&gt; = df::borrow_mut(parent, <a href="../sui/derived_object.md#sui_derived_object_Claimed">Claimed</a>(id));
+    claimed.fill(uid);
+    <b>abort</b> <a href="../sui/derived_object.md#sui_derived_object_ENotSupported">ENotSupported</a>
 }
 </code></pre>
 
