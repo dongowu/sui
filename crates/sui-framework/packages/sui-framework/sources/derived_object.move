@@ -26,6 +26,15 @@ public struct Claimed(ID) has copy, drop, store;
 /// An internal key to protect from generating the same UID twice (e.g. collide with DFs)
 public struct DerivedObjectKey<K: copy + drop + store>(K) has copy, drop, store;
 
+/// The possible values of a claimed UID.
+/// We make it an enum to make upgradeability easier in the future.
+public enum ClaimedStatus has store {
+    /// The UID has been claimed and cannot be re-claimed or used.
+    Reserved,
+    /// (not operational now) The UID has been claimed at least once and is stashed.
+    Stashed(UID),
+}
+
 /// Claim a deterministic UID, using the parent's UID & any key.
 public fun claim<K: copy + drop + store>(parent: &mut UID, key: K): UID {
     let addr = derive_address(parent.to_inner(), key);
@@ -35,9 +44,7 @@ public fun claim<K: copy + drop + store>(parent: &mut UID, key: K): UID {
 
     let uid = object::new_uid_from_hash(addr);
 
-    // We save the value as `Option<UID>`,
-    // in case we want to enable "stash"-functionality of the UIDs in the future.
-    df::add<_, Option<UID>>(parent, Claimed(id), option::none());
+    df::add(parent, Claimed(id), ClaimedStatus::Reserved);
 
     uid
 }

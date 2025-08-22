@@ -2470,10 +2470,10 @@ Claimed
 DerivedObjectKey
 	public struct
 	0x2::derived_object
-claim
-	public fun
+ClaimedStatus
+	public enum
 	0x2::derived_object
-restore
+claim
 	public fun
 	0x2::derived_object
 exists
