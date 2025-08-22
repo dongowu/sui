@@ -8,6 +8,7 @@ use sui::derived_object;
 use sui::test_utils::destroy;
 
 use fun object::new as TxContext.new;
+
 public struct Registry has key { id: UID }
 
 #[test]
