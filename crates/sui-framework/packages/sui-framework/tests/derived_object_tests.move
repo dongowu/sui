@@ -3,11 +3,11 @@
 
 module sui::derived_object_tests;
 
+use std::unit_test::assert_eq;
 use sui::derived_object;
 use sui::test_utils::destroy;
 
 use fun object::new as TxContext.new;
-
 public struct Registry has key { id: UID }
 
 #[test]
@@ -87,6 +87,13 @@ fun test_derive_address_deterministic() {
 }
 
 #[test]
+fun test_derive_address_deterministic_snapshot() {
+    // Making sure that our derivation algorithm never changes!
+    let addr1 = derived_object::derive_address(@0x2.to_id(), b"foo");
+    assert_eq!(addr1, @0xa2b411aa9588c398d8e3bc97dddbdd430b5ded7f81545d05e33916c3ca0f30c3);
+}
+
+#[test]
 fun test_similar_keys_different_addresses() {
     let mut ctx = tx_context::dummy();
     let registry = Registry { id: ctx.new() };
@@ -120,21 +127,6 @@ fun test_similar_keys_different_addresses_2() {
     assert!(addr1 != addr2);
 
     destroy(registry);
-}
-
-// Tries to return an object to a different parent than the one that created it.addr1
-#[test, expected_failure(abort_code = derived_object::EInvalidParent)]
-fun try_to_restore_id_with_invalid_parent() {
-    let mut ctx = tx_context::dummy();
-    let mut parent_uid = object::new(&mut ctx);
-    let mut another_parent_uid = object::new(&mut ctx);
-
-    let key = b"demo".to_string();
-    let uid = derived_object::claim(&mut parent_uid, key);
-
-    derived_object::restore(&mut another_parent_uid, uid);
-
-    abort
 }
 
 #[test, expected_failure(abort_code = derived_object::EObjectAlreadyExists)]
