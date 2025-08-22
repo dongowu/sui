@@ -60,7 +60,9 @@ pub enum Instruction {
     Abort(Trivial),
     Nop,
     VariantSwitch {
-        cases: Vec<Label>,
+        condition: Trivial,
+        labels: Vec<Label>,
+        variants: Vec<Symbol>,
     },
     Drop(RegId), // Drop an operand in the case of a Pop operation
     NotImplemented(String),
@@ -273,15 +275,19 @@ impl std::fmt::Display for Instruction {
                 else_label,
             } => write!(f, "JumpIf({condition}, LBL_{then_label}, LBL_{else_label})"),
             Instruction::Abort(trivial) => write!(f, "Abort({trivial})"),
-            Instruction::VariantSwitch { cases } => {
-                write!(f, "VariantSwitch(")?;
-                for (i, case) in cases.iter().enumerate() {
+            Instruction::VariantSwitch {
+                condition,
+                labels,
+                variants,
+            } => {
+                write!(f, "Switch({condition}) ")?;
+                for (i, label) in labels.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "Label({case})")?;
+                    write!(f, "Case: {} (lbl {label})", variants[i])?
                 }
-                write!(f, ")")
+                write!(f, "")
             }
             Instruction::Drop(reg_id) => write!(f, "Drop({reg_id})"),
             Instruction::Nop => write!(f, "NoOperation"),

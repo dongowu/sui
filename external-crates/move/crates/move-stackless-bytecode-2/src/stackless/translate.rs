@@ -164,10 +164,10 @@ pub(crate) fn bytecode<K: SourceKind>(
     }
 
     macro_rules! primitive_op {
-        ($op:expr, $($rval:expr),+ $(,)?) => {
+        ($op:expr, $rval:expr) => {
             RValue::Primitive {
                 op: $op,
-                args: vec![$($rval),+],
+                args: vec![$rval],
             }
         };
     }
@@ -195,6 +195,17 @@ pub(crate) fn bytecode<K: SourceKind>(
         () => {
             ctxt.pop_register()
         };
+    }
+
+    macro_rules! primitive_bin_op {
+        ($op:expr) => {{
+            let second = Register(pop!());
+            let first = Register(pop!());
+            RValue::Primitive {
+                op: $op,
+                args: vec![first, second],
+            }
+        }};
     }
 
     match op {
@@ -363,60 +374,43 @@ pub(crate) fn bytecode<K: SourceKind>(
         }
 
         IB::Add => {
-            assign_reg!([push!()] = primitive_op!(Op::Add, Register(pop!()), Register(pop!())))
+            assign_reg!([push!()] = primitive_bin_op!(Op::Add))
         }
 
         IB::Sub => {
-            let subtraend = pop!();
-            let minuend = pop!();
-            assign_reg!(
-                [push!()] = primitive_op!(Op::Subtract, Register(minuend), Register(subtraend))
-            )
+            assign_reg!([push!()] = primitive_bin_op!(Op::Subtract))
         }
 
         IB::Mul => {
-            let multiplier = pop!();
-            let multiplicand = pop!();
-            assign_reg!(
-                [push!()] =
-                    primitive_op!(Op::Multiply, Register(multiplicand), Register(multiplier))
-            )
+            assign_reg!([push!()] = primitive_bin_op!(Op::Multiply))
         }
 
         IB::Mod => {
-            let divisor = pop!();
-            let dividend = pop!();
-            assign_reg!(
-                [push!()] = primitive_op!(Op::Modulo, Register(dividend), Register(divisor))
-            )
+            assign_reg!([push!()] = primitive_bin_op!(Op::Modulo))
         }
 
         IB::Div => {
-            let divisor = pop!();
-            let dividend = pop!();
-            assign_reg!(
-                [push!()] = primitive_op!(Op::Divide, Register(dividend), Register(divisor))
-            )
+            assign_reg!([push!()] = primitive_bin_op!(Op::Divide))
         }
 
         IB::BitOr => {
-            assign_reg!([push!()] = primitive_op!(Op::BitOr, Register(pop!()), Register(pop!())))
+            assign_reg!([push!()] = primitive_bin_op!(Op::BitOr))
         }
 
         IB::BitAnd => {
-            assign_reg!([push!()] = primitive_op!(Op::BitAnd, Register(pop!()), Register(pop!())))
+            assign_reg!([push!()] = primitive_bin_op!(Op::BitAnd))
         }
 
         IB::Xor => {
-            assign_reg!([push!()] = primitive_op!(Op::Xor, Register(pop!()), Register(pop!())))
+            assign_reg!([push!()] = primitive_bin_op!(Op::Xor))
         }
 
         IB::Or => {
-            assign_reg!([push!()] = primitive_op!(Op::Or, Register(pop!()), Register(pop!())))
+            assign_reg!([push!()] = primitive_bin_op!(Op::Or))
         }
 
         IB::And => {
-            assign_reg!([push!()] = primitive_op!(Op::And, Register(pop!()), Register(pop!())))
+            assign_reg!([push!()] = primitive_bin_op!(Op::And))
         }
 
         IB::Not => {
@@ -424,32 +418,25 @@ pub(crate) fn bytecode<K: SourceKind>(
         }
 
         IB::Eq => {
-            assign_reg!([push!()] = primitive_op!(Op::Equal, Register(pop!()), Register(pop!())))
+            assign_reg!([push!()] = primitive_bin_op!(Op::Equal))
         }
 
         IB::Neq => {
-            assign_reg!([push!()] = primitive_op!(Op::NotEqual, Register(pop!()), Register(pop!())))
+            assign_reg!([push!()] = primitive_bin_op!(Op::NotEqual))
         }
 
         IB::Lt => {
-            assign_reg!([push!()] = primitive_op!(Op::LessThan, Register(pop!()), Register(pop!())))
+            assign_reg!([push!()] = primitive_bin_op!(Op::LessThan))
         }
 
         IB::Gt => {
-            assign_reg!(
-                [push!()] = primitive_op!(Op::GreaterThan, Register(pop!()), Register(pop!()))
-            )
+            assign_reg!([push!()] = primitive_bin_op!(Op::GreaterThan))
         }
 
-        IB::Le => assign_reg!(
-            [push!()] = primitive_op!(Op::LessThanOrEqual, Register(pop!()), Register(pop!()))
-        ),
+        IB::Le => assign_reg!([push!()] = primitive_bin_op!(Op::LessThanOrEqual)),
 
         IB::Ge => {
-            assign_reg!(
-                [push!()] =
-                    primitive_op!(Op::GreaterThanOrEqual, Register(pop!()), Register(pop!()))
-            )
+            assign_reg!([push!()] = primitive_bin_op!(Op::GreaterThanOrEqual))
         }
 
         IB::Abort => Instruction::Abort(Register(ctxt.pop_register())),
@@ -457,15 +444,11 @@ pub(crate) fn bytecode<K: SourceKind>(
         IB::Nop => Instruction::Nop,
 
         IB::Shl => {
-            assign_reg!(
-                [push!()] = primitive_op!(Op::ShiftLeft, Register(pop!()), Register(pop!()))
-            )
+            assign_reg!([push!()] = primitive_bin_op!(Op::ShiftLeft))
         }
 
         IB::Shr => {
-            assign_reg!(
-                [push!()] = primitive_op!(Op::ShiftRight, Register(pop!()), Register(pop!()))
-            )
+            assign_reg!([push!()] = primitive_bin_op!(Op::ShiftRight))
         }
 
         IB::VecPack(bx) => {
@@ -585,7 +568,9 @@ pub(crate) fn bytecode<K: SourceKind>(
         IB::VariantSwitch(jt) => {
             let JumpTableInner::Full(offsets) = &jt.jump_table;
             Instruction::VariantSwitch {
-                cases: offsets
+                condition: Register(pop!()),
+                variants: jt.enum_.variants.keys().cloned().collect(),
+                labels: offsets
                     .iter()
                     .map(|offset| *offset as usize)
                     .collect::<Vec<_>>(),
