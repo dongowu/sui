@@ -42,8 +42,8 @@ public fun claim<K: copy + drop + store>(parent: &mut UID, key: K): UID {
     uid
 }
 
-/// Checks if a provided `key` has been claimed in the past. This does not guarantee
-/// that the UID is still live (it might have been deleted.)
+/// Checks if a provided `key` has been claimed for the given parent.
+/// Note: If the UID has been deleted through `object::delete`, this will always return true.
 public fun exists<K: copy + drop + store>(parent: &UID, key: K): bool {
     let addr = derive_address(parent.to_inner(), key);
     df::exists_(parent, Claimed(addr.to_id()))
