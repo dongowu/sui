@@ -11,6 +11,14 @@ use fun object::new as TxContext.new;
 
 public struct Registry has key { id: UID }
 
+public struct DemoStruct has copy, store, drop {
+    value: u64,
+}
+
+public struct GenericStruct<T: copy + store + drop> has copy, store, drop {
+    value: T,
+}
+
 #[test]
 fun create_derived_id() {
     let mut ctx = tx_context::dummy();
@@ -92,6 +100,20 @@ fun test_derive_address_deterministic_snapshot() {
     // Making sure that our derivation algorithm never changes!
     let addr1 = derived_object::derive_address(@0x2.to_id(), b"foo");
     assert_eq!(addr1, @0xa2b411aa9588c398d8e3bc97dddbdd430b5ded7f81545d05e33916c3ca0f30c3);
+}
+
+#[test]
+fun test_derive_address_with_struct_key_snapshot() {
+    let key = DemoStruct { value: 1 };
+    let addr = derived_object::derive_address(@0x2.to_id(), key);
+    assert_eq!(addr, @0x20c58d8790a5d2214c159c23f18a5fdc347211e511186353e785ad543abcea6b);
+}
+
+#[test]
+fun test_derive_address_with_generic_struct_key_snapshot() {
+    let key = GenericStruct<u64> { value: 1 };
+    let addr = derived_object::derive_address(@0x2.to_id(), key);
+    assert_eq!(addr, @0xb497b8dcf1e297ae5fa69c040e4a08ef8240d5373bbc9d6b686ffbd7dfe04cbe);
 }
 
 #[test]
