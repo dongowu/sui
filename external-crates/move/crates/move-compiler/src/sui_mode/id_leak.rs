@@ -196,13 +196,15 @@ impl SimpleAbsInt for IDLeakVerifierAI<'_> {
         if !matches!(first_value, Value::FreshID(_)) {
             let msg = "Invalid object creation without a newly created UID.".to_string();
             let uid_msg = format!(
-                "The UID must come directly from {sui}::{object}::{new}. \
-                Or for tests, it can come from {sui}::{ts}::{ts_new}",
+                "The UID must come directly from {sui}::{object}::{new} or {sui}::{derived}::{claim}. \
+                For tests, it can come from {sui}::{ts}::{ts_new}",
                 sui = SUI_ADDR_NAME,
                 object = OBJECT_MODULE_NAME,
                 new = OBJECT_NEW,
                 ts = TEST_SCENARIO_MODULE_NAME,
                 ts_new = TS_NEW_OBJECT,
+                derived = DERIVED_OBJECT_MODULE_NAME,
+                claim = DERIVED_OBJECT_CLAIM,
             );
             let mut d = diag!(ID_LEAK_DIAG, (e.exp.loc, msg), (f.loc(), uid_msg));
             if let Value::NotFresh(stale) = first_value {

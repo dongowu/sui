@@ -369,7 +369,7 @@ fn pack(
         let msg = format!(
             "Invalid object creation in {cur_package}::{cur_module}::{cur_function}. \
                 Object created without a newly created UID. \
-                The UID must come directly from sui::{}::{}, or `sui::{}::{}`. \
+                The UID must come directly from sui::{}::{}, or sui::{}::{}. \
                 For tests, it can also come from sui::{}::{}",
             OBJECT_NEW.1,
             OBJECT_NEW.2,
