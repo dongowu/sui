@@ -4,8 +4,9 @@
 use std::sync::Arc;
 
 use crate::execution_scheduler::balance_withdraw_scheduler::{
-    balance_read::AccountBalanceRead, naive_scheduler::NaiveBalanceWithdrawScheduler,
-    BalanceSettlement, ScheduleResult, TxBalanceWithdraw,
+    balance_read::AccountBalanceRead, eager_scheduler::EagerBalanceWithdrawScheduler,
+    naive_scheduler::NaiveBalanceWithdrawScheduler, BalanceSettlement, ScheduleResult,
+    TxBalanceWithdraw,
 };
 use futures::stream::FuturesUnordered;
 use mysten_metrics::monitored_mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
@@ -59,8 +60,13 @@ impl BalanceWithdrawScheduler {
     pub fn new(
         balance_read: Arc<dyn AccountBalanceRead>,
         starting_accumulator_version: SequenceNumber,
+        use_eager_scheduler: bool,
     ) -> Arc<Self> {
-        let inner = NaiveBalanceWithdrawScheduler::new(balance_read, starting_accumulator_version);
+        let inner: Arc<dyn BalanceWithdrawSchedulerTrait> = if use_eager_scheduler {
+            EagerBalanceWithdrawScheduler::new(balance_read, starting_accumulator_version)
+        } else {
+            NaiveBalanceWithdrawScheduler::new(balance_read, starting_accumulator_version)
+        };
         let (withdraw_sender, withdraw_receiver) =
             unbounded_channel("withdraw_scheduler_withdraws");
         let (settlement_sender, settlement_receiver) =
