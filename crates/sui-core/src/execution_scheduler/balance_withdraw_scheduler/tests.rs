@@ -6,8 +6,11 @@ use crate::execution_scheduler::balance_withdraw_scheduler::{
     balance_read::MockBalanceRead, scheduler::BalanceWithdrawScheduler, BalanceSettlement,
     ScheduleStatus, TxBalanceWithdraw,
 };
-use futures::stream::{FuturesUnordered, StreamExt};
+use futures::stream::FuturesUnordered;
+use futures::StreamExt;
 use rand::{seq::SliceRandom, Rng};
+use std::collections::HashSet;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use sui_types::{
     base_types::{ObjectID, SequenceNumber},
@@ -57,19 +60,22 @@ async fn wait_for_results(
 }
 
 #[tokio::test]
-async fn test_basic_sufficient_balance() {
+#[should_panic(expected = "Elapsed")]
+async fn test_schedule_wait_for_settlement() {
+    // This test checks that a withdraw cannot be scheduled until
+    // a settlement, and if there is no settlement we would lose liveness.
     let init_version = SequenceNumber::from_u64(0);
     let account = ObjectID::random();
     let test = TestScheduler::new(init_version, BTreeMap::from([(account, 100)]));
 
     let withdraw = TxBalanceWithdraw {
         tx_digest: TransactionDigest::random(),
-        reservations: BTreeMap::from([(account, 50)]),
+        reservations: BTreeMap::from([(account, 200)]),
     };
 
     let receivers = test
         .scheduler
-        .schedule_withdraws(init_version, vec![withdraw.clone()]);
+        .schedule_withdraws(init_version.next(), vec![withdraw.clone()]);
     wait_for_results(
         receivers,
         BTreeMap::from([(withdraw.tx_digest, ScheduleStatus::SufficientBalance)]),
@@ -78,75 +84,65 @@ async fn test_basic_sufficient_balance() {
 }
 
 #[tokio::test]
-async fn test_basic_insufficient_balance() {
-    let init_version = SequenceNumber::from_u64(0);
+async fn test_schedules_and_settles() {
+    let v0 = SequenceNumber::from_u64(0);
     let account = ObjectID::random();
-    let test = TestScheduler::new(init_version, BTreeMap::from([(account, 100)]));
+    let test = TestScheduler::new(v0, BTreeMap::from([(account, 100)]));
 
-    let withdraw = TxBalanceWithdraw {
+    let withdraw0 = TxBalanceWithdraw {
         tx_digest: TransactionDigest::random(),
-        reservations: BTreeMap::from([(account, 150)]),
+        reservations: BTreeMap::from([(account, 60)]),
+    };
+    let withdraw1 = TxBalanceWithdraw {
+        tx_digest: TransactionDigest::random(),
+        reservations: BTreeMap::from([(account, 60)]),
+    };
+    let withdraw2 = TxBalanceWithdraw {
+        tx_digest: TransactionDigest::random(),
+        reservations: BTreeMap::from([(account, 60)]),
     };
 
     let receivers = test
         .scheduler
-        .schedule_withdraws(init_version, vec![withdraw.clone()]);
+        .schedule_withdraws(v0, vec![withdraw0.clone()]);
+
     wait_for_results(
         receivers,
-        BTreeMap::from([(withdraw.tx_digest, ScheduleStatus::InsufficientBalance)]),
+        BTreeMap::from([(withdraw0.tx_digest, ScheduleStatus::SufficientBalance)]),
+    )
+    .await;
+
+    let v1 = v0.next();
+    let receivers = test
+        .scheduler
+        .schedule_withdraws(v1, vec![withdraw1.clone()]);
+
+    // 100 -> 40, v0 -> v1
+    test.settle_balance_changes(BTreeMap::from([(account, -60)]));
+
+    wait_for_results(
+        receivers,
+        BTreeMap::from([(withdraw1.tx_digest, ScheduleStatus::InsufficientBalance)]),
+    )
+    .await;
+
+    let v2 = v1.next();
+    let receivers = test
+        .scheduler
+        .schedule_withdraws(v2, vec![withdraw2.clone()]);
+
+    // 40 -> 60, v1 -> v2
+    test.settle_balance_changes(BTreeMap::from([(account, 20)]));
+
+    wait_for_results(
+        receivers,
+        BTreeMap::from([(withdraw2.tx_digest, ScheduleStatus::SufficientBalance)]),
     )
     .await;
 }
 
 #[tokio::test]
 async fn test_already_executed() {
-    let init_version = SequenceNumber::from_u64(0);
-    let account = ObjectID::random();
-    let test = TestScheduler::new(init_version, BTreeMap::from([(account, 100)]));
-
-    // Settle multiple versions to advance the accumulator
-    let v1 = init_version.next();
-    test.settle_balance_changes(BTreeMap::new());
-    test.settle_balance_changes(BTreeMap::new());
-    test.settle_balance_changes(BTreeMap::new());
-
-    // Give some time for the settlements to be processed
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    // Now try to schedule withdraws for versions that have already been passed
-    // Since we're at v3, scheduling for v0, v1, or v2 should return AlreadyExecuted
-    let withdraw = TxBalanceWithdraw {
-        tx_digest: TransactionDigest::random(),
-        reservations: BTreeMap::from([(account, 50)]),
-    };
-
-    let receivers = test
-        .scheduler
-        .schedule_withdraws(init_version, vec![withdraw.clone()]);
-    wait_for_results(
-        receivers,
-        BTreeMap::from([(withdraw.tx_digest, ScheduleStatus::AlreadyExecuted)]),
-    )
-    .await;
-
-    // Also test v1
-    let withdraw2 = TxBalanceWithdraw {
-        tx_digest: TransactionDigest::random(),
-        reservations: BTreeMap::from([(account, 30)]),
-    };
-
-    let receivers = test
-        .scheduler
-        .schedule_withdraws(v1, vec![withdraw2.clone()]);
-    wait_for_results(
-        receivers,
-        BTreeMap::from([(withdraw2.tx_digest, ScheduleStatus::AlreadyExecuted)]),
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn test_already_executed_multiple_transactions() {
     let init_version = SequenceNumber::from_u64(0);
     let account1 = ObjectID::random();
     let account2 = ObjectID::random();
@@ -184,208 +180,24 @@ async fn test_already_executed_multiple_transactions() {
 }
 
 #[tokio::test]
-async fn test_already_executed_after_out_of_order_settlement() {
-    let v0 = SequenceNumber::from_u64(0);
-    let account = ObjectID::random();
-    let test = TestScheduler::new(v0, BTreeMap::from([(account, 100)]));
-
-    let v1 = v0.next();
-    // Settle out of order: v3, v2, v1
-    // This tests that the scheduler correctly handles out-of-order settlements
-    test.settle_balance_changes(BTreeMap::new());
-    test.settle_balance_changes(BTreeMap::new());
-    test.settle_balance_changes(BTreeMap::new());
-
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    // Try to schedule for v0, which should be already executed
-    let withdraw = TxBalanceWithdraw {
-        tx_digest: TransactionDigest::random(),
-        reservations: BTreeMap::from([(account, 50)]),
-    };
-
-    let receivers = test
-        .scheduler
-        .schedule_withdraws(v0, vec![withdraw.clone()]);
-    wait_for_results(
-        receivers,
-        BTreeMap::from([(withdraw.tx_digest, ScheduleStatus::AlreadyExecuted)]),
-    )
-    .await;
-
-    // Also try v1, which should also be already executed
-    let withdraw2 = TxBalanceWithdraw {
-        tx_digest: TransactionDigest::random(),
-        reservations: BTreeMap::from([(account, 30)]),
-    };
-
-    let receivers = test
-        .scheduler
-        .schedule_withdraws(v1, vec![withdraw2.clone()]);
-    wait_for_results(
-        receivers,
-        BTreeMap::from([(withdraw2.tx_digest, ScheduleStatus::AlreadyExecuted)]),
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn test_not_already_executed_exact_version() {
+async fn test_multiple_withdraws_same_version() {
+    // This test checks that even though the second withdraw failed due to insufficient balance,
+    // the third withdraw can still be scheduled since the second withdraw does not reserve any balance.
     let init_version = SequenceNumber::from_u64(0);
     let account = ObjectID::random();
-    let test = TestScheduler::new(init_version, BTreeMap::from([(account, 100)]));
-
-    // Settle the next version
-    let next_version = init_version.next();
-    test.settle_balance_changes(BTreeMap::from([(account, -50i128)]));
-
-    tokio::time::sleep(Duration::from_millis(10)).await;
-
-    // Schedule for the exact current version (next_version) should work normally
-    let withdraw = TxBalanceWithdraw {
-        tx_digest: TransactionDigest::random(),
-        reservations: BTreeMap::from([(account, 40)]),
-    };
-
-    let receivers = test
-        .scheduler
-        .schedule_withdraws(next_version, vec![withdraw.clone()]);
-    wait_for_results(
-        receivers,
-        BTreeMap::from([(withdraw.tx_digest, ScheduleStatus::SufficientBalance)]),
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn test_already_executed_with_sequential_settlements() {
-    let v0 = SequenceNumber::from_u64(0);
-    let account = ObjectID::random();
-    let test = TestScheduler::new(v0, BTreeMap::from([(account, 100)]));
-
-    // Settle in order so they are processed immediately
-    test.settle_balance_changes(BTreeMap::from([(account, -20i128)]));
-    tokio::time::sleep(Duration::from_millis(10)).await;
-
-    test.settle_balance_changes(BTreeMap::from([(account, -30i128)]));
-    tokio::time::sleep(Duration::from_millis(10)).await;
-
-    test.settle_balance_changes(BTreeMap::from([(account, -40i128)]));
-    tokio::time::sleep(Duration::from_millis(10)).await;
-
-    // Now v0, v1, and v2 should all return AlreadyExecuted
-    let withdraw = TxBalanceWithdraw {
-        tx_digest: TransactionDigest::random(),
-        reservations: BTreeMap::from([(account, 10)]),
-    };
-
-    let receivers = test
-        .scheduler
-        .schedule_withdraws(v0, vec![withdraw.clone()]);
-    wait_for_results(
-        receivers,
-        BTreeMap::from([(withdraw.tx_digest, ScheduleStatus::AlreadyExecuted)]),
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn test_basic_settlement() {
-    let init_version = SequenceNumber::from_u64(0);
-    let account = ObjectID::random();
-    let test = TestScheduler::new(init_version, BTreeMap::from([(account, 100)]));
-
-    let withdraw = TxBalanceWithdraw {
-        tx_digest: TransactionDigest::random(),
-        reservations: BTreeMap::from([(account, 50)]),
-    };
-
-    let receivers = test
-        .scheduler
-        .schedule_withdraws(init_version, vec![withdraw.clone()]);
-    wait_for_results(
-        receivers,
-        BTreeMap::from([(withdraw.tx_digest, ScheduleStatus::SufficientBalance)]),
-    )
-    .await;
-
-    let next_version = init_version.next();
-    test.settle_balance_changes(BTreeMap::from([(account, -50i128)]));
-
-    let receivers = test
-        .scheduler
-        .schedule_withdraws(next_version, vec![withdraw.clone()]);
-    wait_for_results(
-        receivers,
-        BTreeMap::from([(withdraw.tx_digest, ScheduleStatus::SufficientBalance)]),
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn test_out_of_order_settlements() {
-    let v0 = SequenceNumber::from_u64(0);
-    let account = ObjectID::random();
-    let test = TestScheduler::new(v0, BTreeMap::from([(account, 100)]));
-
-    let v1 = v0.next();
-    test.settle_balance_changes(BTreeMap::from([(account, -80i128)]));
-    test.settle_balance_changes(BTreeMap::from([(account, -20i128)]));
-
-    // Give time for settlements to be processed
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    let test = TestScheduler::new(init_version, BTreeMap::from([(account, 90)]));
 
     let withdraw1 = TxBalanceWithdraw {
         tx_digest: TransactionDigest::random(),
         reservations: BTreeMap::from([(account, 50)]),
     };
-    let receivers = test
-        .scheduler
-        .schedule_withdraws(v0, vec![withdraw1.clone()]);
-    wait_for_results(
-        receivers,
-        BTreeMap::from([(withdraw1.tx_digest, ScheduleStatus::AlreadyExecuted)]),
-    )
-    .await;
-
     let withdraw2 = TxBalanceWithdraw {
         tx_digest: TransactionDigest::random(),
-        reservations: BTreeMap::from([(account, 80)]),
+        reservations: BTreeMap::from([(account, 50)]),
     };
-    let receivers = test
-        .scheduler
-        .schedule_withdraws(v1, vec![withdraw2.clone()]);
-    wait_for_results(
-        receivers,
-        BTreeMap::from([(withdraw2.tx_digest, ScheduleStatus::AlreadyExecuted)]),
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn test_multi_accounts() {
-    let init_version = SequenceNumber::from_u64(0);
-    let account1 = ObjectID::random();
-    let account2 = ObjectID::random();
-    let test = TestScheduler::new(
-        init_version,
-        BTreeMap::from([(account1, 100), (account2, 100)]),
-    );
-
-    let reservations1 = BTreeMap::from([(account1, 50), (account2, 50)]);
-    let withdraw1 = TxBalanceWithdraw {
-        tx_digest: TransactionDigest::random(),
-        reservations: reservations1,
-    };
-    let reservations2 = BTreeMap::from([(account1, 50), (account2, 60)]);
-    let withdraw2 = TxBalanceWithdraw {
-        tx_digest: TransactionDigest::random(),
-        reservations: reservations2,
-    };
-    let reservations3 = BTreeMap::from([(account1, 50), (account2, 50)]);
     let withdraw3 = TxBalanceWithdraw {
         tx_digest: TransactionDigest::random(),
-        reservations: reservations3,
+        reservations: BTreeMap::from([(account, 40)]),
     };
 
     let receivers = test.scheduler.schedule_withdraws(
@@ -404,108 +216,47 @@ async fn test_multi_accounts() {
 }
 
 #[tokio::test]
-async fn test_multi_settlements() {
+async fn test_multiple_withdraws_multiple_accounts_same_version() {
     let init_version = SequenceNumber::from_u64(0);
-    let account = ObjectID::random();
-    let test = TestScheduler::new(init_version, BTreeMap::from([(account, 100)]));
+    let account1 = ObjectID::random();
+    let account2 = ObjectID::random();
+    let test = TestScheduler::new(
+        init_version,
+        BTreeMap::from([(account1, 100), (account2, 100)]),
+    );
 
-    let withdraw = TxBalanceWithdraw {
+    let withdraw1 = TxBalanceWithdraw {
         tx_digest: TransactionDigest::random(),
-        reservations: BTreeMap::from([(account, 50)]),
+        reservations: BTreeMap::from([(account1, 100), (account2, 200)]),
+    };
+    let withdraw2 = TxBalanceWithdraw {
+        tx_digest: TransactionDigest::random(),
+        reservations: BTreeMap::from([(account1, 1)]),
+    };
+    let withdraw3 = TxBalanceWithdraw {
+        tx_digest: TransactionDigest::random(),
+        reservations: BTreeMap::from([(account2, 100)]),
     };
 
-    let receivers = test
-        .scheduler
-        .schedule_withdraws(init_version, vec![withdraw.clone()]);
+    let receivers = test.scheduler.schedule_withdraws(
+        init_version,
+        vec![withdraw1.clone(), withdraw2.clone(), withdraw3.clone()],
+    );
     wait_for_results(
         receivers,
-        BTreeMap::from([(withdraw.tx_digest, ScheduleStatus::SufficientBalance)]),
-    )
-    .await;
-
-    let next_version = init_version.next();
-    test.settle_balance_changes(BTreeMap::from([(account, -50i128)]));
-
-    let receivers = test
-        .scheduler
-        .schedule_withdraws(next_version, vec![withdraw.clone()]);
-    wait_for_results(
-        receivers,
-        BTreeMap::from([(withdraw.tx_digest, ScheduleStatus::SufficientBalance)]),
-    )
-    .await;
-
-    let next_version = next_version.next();
-    test.settle_balance_changes(BTreeMap::from([(account, -50i128)]));
-
-    let receivers = test
-        .scheduler
-        .schedule_withdraws(next_version, vec![withdraw.clone()]);
-    wait_for_results(
-        receivers,
-        BTreeMap::from([(withdraw.tx_digest, ScheduleStatus::InsufficientBalance)]),
+        BTreeMap::from([
+            (withdraw1.tx_digest, ScheduleStatus::InsufficientBalance),
+            (withdraw2.tx_digest, ScheduleStatus::InsufficientBalance),
+            (withdraw3.tx_digest, ScheduleStatus::SufficientBalance),
+        ]),
     )
     .await;
 }
 
 #[tokio::test]
-async fn test_settlement_far_ahead_of_schedule() {
-    let v0 = SequenceNumber::from_u64(0);
-    let account = ObjectID::random();
-    let test = TestScheduler::new(v0, BTreeMap::from([(account, 100)]));
-    let v1 = v0.next();
-    let v2 = v1.next();
-    // From v0 to v1, we reserve 100, but does not withdraw anything.
-    test.settle_balance_changes(BTreeMap::from([]));
+async fn balance_withdraw_scheduler_stress_test() {
+    telemetry_subscribers::init_for_testing();
 
-    // From v1 to v2, we reserve 100, and withdraw 50.
-    test.settle_balance_changes(BTreeMap::from([(account, -50i128)]));
-
-    // From v2 to v3, we reserve 50, and withdraw 50.
-    test.settle_balance_changes(BTreeMap::from([(account, -50i128)]));
-
-    // Give time for settlements to be processed
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    let withdraw = TxBalanceWithdraw {
-        tx_digest: TransactionDigest::random(),
-        reservations: BTreeMap::from([(account, 100)]),
-    };
-    let receivers = test
-        .scheduler
-        .schedule_withdraws(v0, vec![withdraw.clone()]);
-    wait_for_results(
-        receivers,
-        BTreeMap::from([(withdraw.tx_digest, ScheduleStatus::AlreadyExecuted)]),
-    )
-    .await;
-
-    let receivers = test
-        .scheduler
-        .schedule_withdraws(v1, vec![withdraw.clone()]);
-    wait_for_results(
-        receivers,
-        BTreeMap::from([(withdraw.tx_digest, ScheduleStatus::AlreadyExecuted)]),
-    )
-    .await;
-
-    let withdraw = TxBalanceWithdraw {
-        tx_digest: TransactionDigest::random(),
-        reservations: BTreeMap::from([(account, 50)]),
-    };
-
-    let receivers = test
-        .scheduler
-        .schedule_withdraws(v2, vec![withdraw.clone()]);
-    wait_for_results(
-        receivers,
-        BTreeMap::from([(withdraw.tx_digest, ScheduleStatus::AlreadyExecuted)]),
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn stress_test() {
     let num_accounts = 5;
     let num_transactions = 10000;
 
@@ -524,15 +275,17 @@ async fn stress_test() {
             }
         })
         .collect::<BTreeMap<_, _>>();
+    tracing::debug!("Init balances: {:?}", init_balances);
 
     let mut withdraws = Vec::new();
     let mut settlements = Vec::new();
     let mut cur_reservations = Vec::new();
 
+    let mut current_balances = init_balances.clone();
     for idx in 0..num_transactions {
-        let num_accounts = rng.gen_range(1..3);
+        let num_reservation_accounts = rng.gen_range(1..3);
         let account_ids = accounts
-            .choose_multiple(&mut rng, num_accounts)
+            .choose_multiple(&mut rng, num_reservation_accounts)
             .cloned()
             .collect::<Vec<_>>();
         let reservations = account_ids
@@ -543,14 +296,42 @@ async fn stress_test() {
             tx_digest: TransactionDigest::random(),
             reservations,
         });
+        // Every now and then we generate a settlement to advance the version.
+        // We don't really settle any balance changes here, as this test
+        // is primarily focusing on the scheduler's ability to handle
+        // random combinations ofwithdraws reservations.
         if rng.gen_bool(0.2) || idx == num_transactions - 1 {
-            // Every now and then we generate a settlement to advance the version.
-            // We don't really settle any balance changes here, as this test
-            // is primarily focusing on the scheduler's ability to handle
-            // random combinations ofwithdraws reservations.
+            // Generate random balance changes for some of the accounts,
+            // negative values mean withdraws, positive values mean deposits.
+            // Only accounts that had reservations can have negative balance changes.
+            // The absolute value of Withdraws must be bounded by the current balance.
+            let affected_accounts: HashSet<_> = cur_reservations
+                .iter()
+                .flat_map(|withdraw| withdraw.reservations.keys().cloned())
+                .collect();
+            let num_changes = rng.gen_range(0..num_accounts);
+            let balance_changes = accounts
+                .choose_multiple(&mut rng, num_changes)
+                .map(|account_id| {
+                    let cur_balance = current_balances
+                        .get(account_id)
+                        .copied()
+                        .unwrap_or_default() as i128;
+                    let change = if affected_accounts.contains(account_id) {
+                        rng.gen_range(-cur_balance..20)
+                    } else {
+                        rng.gen_range(0..10)
+                    };
+                    (*account_id, change)
+                })
+                .collect::<BTreeMap<_, _>>();
+            for (account_id, change) in balance_changes.iter() {
+                let entry = current_balances.entry(*account_id).or_insert(0);
+                *entry = (*entry as i128 + change) as u128;
+            }
             withdraws.push((version, std::mem::take(&mut cur_reservations)));
+            settlements.push((version, balance_changes));
             version = version.next();
-            settlements.push((version, BTreeMap::new()));
         }
     }
 
@@ -565,38 +346,48 @@ async fn stress_test() {
         let withdraws = withdraws.clone();
 
         let handle = tokio::spawn(async move {
-            let test = TestScheduler::new(version, init_balances);
+            let test = TestScheduler::new(SequenceNumber::from_u64(0), init_balances);
 
             // Start a separate thread to run all settlements on the scheduler.
             let test_clone = test.clone();
             let settlements = settlements.clone();
-            let settle_task = tokio::spawn(async move {
-                for (_version, balance_changes) in settlements {
+            let last_scheduled_version = Arc::new(AtomicU64::new(0));
+            let last_scheduled_version_clone = last_scheduled_version.clone();
+            let _settle_task = tokio::spawn(async move {
+                for (version, balance_changes) in settlements {
+                    // We can only settle after the version has been scheduled.
+                    // This is to avoid non-determinism in the test where some withdraws
+                    // may end up with AlreadyExecuted status if we settle before the version
+                    // has been scheduled.
+                    while last_scheduled_version_clone.load(Ordering::Relaxed) < version.value() {
+                        tokio::time::sleep(Duration::from_millis(1)).await;
+                    }
+                    let delay_ms = rand::thread_rng().gen_range(0..3);
+                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                     test_clone.settle_balance_changes(balance_changes);
-                    tokio::time::sleep(Duration::from_millis(5)).await;
                 }
             });
 
-            let mut all_receivers = FuturesUnordered::new();
+            let mut all_receivers = Vec::new();
             for (version, withdraws) in withdraws {
                 let receivers = test.scheduler.schedule_withdraws(version, withdraws);
-                tokio::time::sleep(Duration::from_millis(5)).await;
-                all_receivers.extend(receivers);
+                all_receivers.push((version, receivers));
             }
-            // Wait for the settle task to finish.
-            settle_task.await.unwrap();
 
             let mut results = BTreeMap::new();
-            while let Some(result) = all_receivers.next().await {
-                let result = result.unwrap();
-                results.insert(result.tx_digest, result.status);
+            for (version, receivers) in all_receivers {
+                for result in receivers {
+                    let result = result.await.unwrap();
+                    results.insert(result.tx_digest, result.status);
+                }
+                last_scheduled_version.store(version.value(), Ordering::Relaxed);
             }
             results
         });
         handles.push(handle);
     }
 
-    // Wait for all tasks to complete and compare results
+    // Wait for all tasks to complete and check that all results are the same.
     for handle in handles {
         let results = handle.await.unwrap();
         if expected_results.is_none() {
