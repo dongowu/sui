@@ -56,6 +56,7 @@ use sui_types::{
 pub use self::epoch_state::EpochState;
 pub use self::store::SimulatorStore;
 pub use self::store::in_mem_store::InMemoryStore;
+pub use sui_types::transaction_executor::TransactionChecks;
 use self::store::in_mem_store::KeyStore;
 use sui_config::certificate_deny_config::CertificateDenyConfig;
 use sui_core::mock_checkpoint_builder::{MockCheckpointBuilder, ValidatorKeypairProvider};
@@ -63,9 +64,15 @@ use sui_types::layout_resolver::LayoutResolver;
 use sui_types::messages_checkpoint::{CheckpointContents, CheckpointSequenceNumber};
 use sui_types::sui_system_state::SuiSystemState;
 use sui_types::{
+    error::{SuiError, SuiErrorKind},
+    full_checkpoint_content::ObjectSet,
     gas_coin::GasCoin,
     programmable_transaction_builder::ProgrammableTransactionBuilder,
     transaction::{GasData, TransactionData, TransactionKind},
+    transaction_driver_types::{
+        ExecuteTransactionRequestV3, ExecuteTransactionResponseV3, TransactionSubmissionError,
+    },
+    transaction_executor::SimulateTransactionResult,
 };
 use tracing::info;
 
@@ -377,41 +384,6 @@ impl<R, S: store::SimulatorStore> Simulacrum<R, S> {
         self.epoch_state
             .create_layout_resolver(&self.store, inner_temp_store)
     }
-
-    // #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-    // pub fn dev_inspect(
-    //     &self,
-    //     sender: SuiAddress,
-    //     transaction_kind: TransactionKind,
-    //     gas_price: Option<u64>,
-    //     gas_budget: Option<u64>,
-    //     gas_sponsor: Option<SuiAddress>,
-    //     gas_objects: Option<Vec<ObjectRef>>,
-    //     show_raw_txn_data_and_effects: Option<bool>,
-    //     skip_checks: Option<bool>,
-    // ) -> anyhow::Result<(
-    //     InnerTemporaryStore,
-    //     TransactionEffects,
-    //     TransactionEvents,
-    //     Vec<u8>, /* raw txn data */
-    //     Vec<u8>, /* raw_effects */
-    //     Result<Vec<ExecutionResult>, ExecutionError>,
-    // )> {
-    //     self.epoch_state.dev_inspect_transaction_block(
-    //         &self.store,
-    //         sender,
-    //         transaction_kind,
-    //         gas_price,
-    //         gas_budget,
-    //         gas_sponsor,
-    //         gas_objects,
-    //         show_raw_txn_data_and_effects,
-    //         skip_checks,
-    //         &self.deny_config,
-    //         &self.certificate_deny_config,
-    //         &self.verifier_signing_config,
-    //     )
-    // }
 
     #[allow(clippy::type_complexity)]
     pub fn dry_run_transaction(
@@ -1040,6 +1012,49 @@ impl Simulacrum {
         let tx_data = TransactionData::new_with_gas_data(kind, sender, gas_data);
         let tx = Transaction::from_data_and_signer(tx_data, vec![key]);
         (tx, transfer_amount)
+    }
+}
+
+#[async_trait::async_trait]
+impl<R: Send + Sync, S: SimulatorStore + Send + Sync>
+    sui_types::transaction_executor::TransactionExecutor for Simulacrum<R, S>
+{
+    async fn execute_transaction(
+        &self,
+        _request: ExecuteTransactionRequestV3,
+        _client_addr: Option<std::net::SocketAddr>,
+    ) -> Result<ExecuteTransactionResponseV3, TransactionSubmissionError> {
+        unimplemented!("Simulacrum does not support execute_transaction via TransactionExecutor")
+    }
+
+    fn simulate_transaction(
+        &self,
+        transaction: TransactionData,
+        checks: TransactionChecks,
+        allow_mock_gas_coin: bool,
+    ) -> Result<SimulateTransactionResult, SuiError> {
+        let (_inner_temp_store, effects, events, execution_result, mock_gas_id) =
+            self.epoch_state
+                .simulate_transaction_impl(
+                    &self.store,
+                    &self.deny_config,
+                    &self.certificate_deny_config,
+                    &self.verifier_signing_config,
+                    transaction,
+                    checks,
+                    allow_mock_gas_coin,
+                )
+                .map_err(|e| SuiErrorKind::Unknown(e.to_string()))?;
+
+        Ok(SimulateTransactionResult {
+            effects,
+            events: Some(events),
+            objects: ObjectSet::default(),
+            execution_result,
+            mock_gas_id,
+            unchanged_loaded_runtime_objects: vec![],
+            suggested_gas_price: None,
+        })
     }
 }
 
