@@ -335,7 +335,7 @@ impl MigrationStore {
             .unwrap()
             .insert(pipeline.to_string(), (result.e_tag, result.version));
 
-        tracing::debug!(
+        debug!(
             pipeline,
             migration_id = self.migration_id,
             checkpoint = checkpoint_hi_inclusive,
