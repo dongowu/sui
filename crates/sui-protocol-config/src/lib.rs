@@ -304,6 +304,7 @@ const MAX_PROTOCOL_VERSION: u64 = 116;
 //              Relax ValidDuring requirement for transactions with owned inputs.
 //              Disable defer_unpaid_amplification (debugging).
 // Version 116: Enable Display Registry.
+//              Enable GCP Confidential Spaces attestation (devnet only).
 
 #[derive(Copy, Clone, Debug, Hash, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ProtocolVersion(u64);
@@ -4678,8 +4679,6 @@ impl ProtocolConfig {
                 }
                 116 => {
                     cfg.feature_flags.enable_display_registry = true;
-                }
-                115 => {
                     // Enable GCP Confidential Spaces attestation on devnet only initially.
                     // Base cost derived from Criterion benchmark: full_verify_gcp_attestation ≈ 22 µs
                     // (ring BoringSSL-backed RSA-2048 PKCS#1v15 SHA-256).
@@ -4689,7 +4688,6 @@ impl ProtocolConfig {
                         cfg.gcp_attestation_verify_cost_per_byte = Some(50);
                     }
                 }
-                116 => {}
                 // Use this template when making changes:
                 //
                 //     // modify an existing constant.
