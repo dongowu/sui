@@ -4679,6 +4679,8 @@ impl ProtocolConfig {
                 }
                 116 => {
                     cfg.feature_flags.enable_display_registry = true;
+                    // Bump package size limit to accommodate new framework modules.
+                    cfg.max_move_package_size = Some(110 * 1024);
                     // Enable GCP Confidential Spaces attestation on devnet only initially.
                     // Base cost derived from Criterion benchmark: full_verify_gcp_attestation ≈ 22 µs
                     // (ring BoringSSL-backed RSA-2048 PKCS#1v15 SHA-256).
