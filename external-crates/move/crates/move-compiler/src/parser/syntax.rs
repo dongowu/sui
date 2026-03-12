@@ -2713,6 +2713,7 @@ fn parse_binop_exp(context: &mut Context, lhs: Exp, min_prec: u32) -> Result<Exp
 // Parse a unary expression:
 //      UnaryExp =
 //          "!" <UnaryExp>
+//          | "-" <UnaryExp>
 //          | "&mut" <UnaryExp>
 //          | "&" "mut" <UnaryExp>
 //          | "&" <UnaryExp>
