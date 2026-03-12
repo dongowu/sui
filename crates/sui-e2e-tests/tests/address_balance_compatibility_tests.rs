@@ -8,7 +8,7 @@ use sui_types::{
     coin_reservation::ParsedObjectRefWithdrawal,
     digests::CheckpointDigest,
     effects::TransactionEffectsAPI,
-    transaction::{Argument, Command, TransactionDataAPI, TransactionKind},
+    transaction::{Argument, Command, ObjectArg, TransactionDataAPI, TransactionKind},
 };
 use test_cluster::addr_balance_test_env::{TestEnvBuilder, get_sui_accumulator_object_id};
 
@@ -993,6 +993,78 @@ async fn test_coin_reservation_rejected_in_sponsored_transaction() {
         "Expected sponsored coin reservation rejection, got: {}",
         err
     );
+
+    test_env.cluster.trigger_reconfiguration().await;
+}
+
+#[sim_test]
+async fn test_merge_coin_into_gas_coin_with_coin_reservation() {
+    // Tests merging a real coin into the ephemeral GasCoin when gas is paid via
+    // coin reservation. The GasCoin starts with (reservation - budget) balance.
+    // After merging, the GasCoin should hold the merged coin's value plus whatever
+    // was available from the reservation. Then transfer GasCoin to a recipient.
+
+    let mut test_env = TestEnvBuilder::new()
+        .with_proto_override_cb(Box::new(|_, mut cfg| {
+            cfg.enable_coin_reservation_for_testing();
+            cfg
+        }))
+        .build()
+        .await;
+
+    let sender = test_env.get_sender(0);
+    let budget = 5_000_000_000u64;
+
+    test_env.fund_one_address_balance(sender, budget).await;
+
+    // Get a real coin to merge into GasCoin
+    let (_, mut all_gas) = test_env.get_sender_and_all_gas(0);
+    let real_coin = all_gas.pop().unwrap();
+    let real_coin_balance = test_env.get_coin_balance(real_coin.0).await;
+
+    let initial_sender_balance = test_env.get_sui_balance_ab(sender);
+
+    // Gas reservation covers exactly the budget — GasCoin starts with 0 available
+    let gas_reservation = test_env.encode_coin_reservation(sender, 0, budget);
+
+    let recipient = SuiAddress::random_for_testing_only();
+
+    // Build: MergeCoins(GasCoin, [real_coin]) then TransferObjects([GasCoin], recipient)
+    let mut builder = TestTransactionBuilder::new(sender, gas_reservation, test_env.rgp);
+    let coin_arg = builder
+        .ptb_builder_mut()
+        .obj(ObjectArg::ImmOrOwnedObject(real_coin))
+        .unwrap();
+    builder
+        .ptb_builder_mut()
+        .command(Command::MergeCoins(Argument::GasCoin, vec![coin_arg]));
+    let rec_arg = builder.ptb_builder_mut().pure(recipient).unwrap();
+    builder
+        .ptb_builder_mut()
+        .command(Command::TransferObjects(vec![Argument::GasCoin], rec_arg));
+    let tx = builder.build();
+
+    let (_, effects) = test_env.exec_tx_directly(tx).await.unwrap();
+    assert!(
+        effects.status().is_ok(),
+        "Transaction failed: {:?}",
+        effects.status()
+    );
+
+    let gas_charge = effects.gas_cost_summary().gas_used();
+
+    // When the ephemeral GasCoin is transferred away, gas charges are redirected to the
+    // coin itself. The coin keeps: real_coin_balance + (budget - gas_charge).
+    let created = effects.created();
+    assert_eq!(created.len(), 1, "Expected exactly one created object");
+    let created_coin_id = created[0].0.0;
+    let coin_balance = test_env.get_coin_balance(created_coin_id).await;
+    assert_eq!(coin_balance, real_coin_balance + budget - gas_charge);
+
+    // Sender's address balance is debited by the full reservation amount (the budget),
+    // since gas charges are paid from the coin, not the address balance.
+    let final_sender_balance = test_env.get_sui_balance_ab(sender);
+    assert_eq!(final_sender_balance, initial_sender_balance - budget);
 
     test_env.cluster.trigger_reconfiguration().await;
 }
