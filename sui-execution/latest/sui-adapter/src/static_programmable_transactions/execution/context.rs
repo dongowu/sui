@@ -364,6 +364,31 @@ impl<'env, 'pc, 'vm, 'state, 'linkage, 'gas> Context<'env, 'pc, 'vm, 'state, 'li
             })
             .transpose()?;
         let gas_id_opt = gas.as_ref().map(|(m, _)| m.id);
+        // Ephemeral gas coins are not input objects. Persist them into the
+        // ObjectRuntime's transfers (and thus writes) separately, without the
+        // end-of-transaction ownership check that only applies to input objects.
+        // finish_ephemeral_gas_coin handles cleanup after writes are materialized.
+        let gas = if matches!(
+            gas_payment_location,
+            Some(GasPayment {
+                location: PaymentLocation::AddressBalance(_),
+                ..
+            })
+        ) {
+            if let Some((metadata, Some(object))) = gas {
+                // TODO: test what happens if the gas transfer takes us over the max transfer limit
+                // an AB transaction could fail here even if it would not have eventually written out a new coin. do we care?
+                self.transfer_object_(
+                    metadata.owner,
+                    metadata.type_,
+                    CtxValue(object),
+                    /* end of transaction */ false,
+                )?;
+            }
+            None
+        } else {
+            gas
+        };
         let object_inputs = object_input_metadata
             .into_iter()
             .enumerate()
