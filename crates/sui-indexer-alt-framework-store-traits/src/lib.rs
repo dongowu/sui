@@ -3,7 +3,6 @@
 
 use std::time::Duration;
 
-use anyhow::Result;
 use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Utc;
@@ -87,6 +86,23 @@ pub trait Connection: Send {
     ) -> anyhow::Result<bool>;
 }
 
+/// A utility function for connections that do not have special initialization logic. These
+/// connections delegate initialization to `Connection::committer_watermark`.
+pub async fn init_with_committer_watermark(
+    connection: &mut impl Connection,
+    pipeline_task: &str,
+    init_watermark: InitWatermark,
+) -> anyhow::Result<InitWatermark> {
+    let checkpoint_hi_inclusive = connection
+        .committer_watermark(pipeline_task)
+        .await?
+        .map(|w| w.checkpoint_hi_inclusive);
+    Ok(InitWatermark {
+        checkpoint_hi_inclusive,
+        ..init_watermark
+    })
+}
+
 /// A storage-agnostic interface that provides database connections for both watermark management
 /// and arbitrary writes. The indexer framework accepts this `Store` implementation to manage
 /// watermarks operations through its associated `Connection` type. This store is also passed to the
@@ -101,7 +117,7 @@ pub trait Store: Send + Sync + 'static + Clone {
     /// committer watermark.
     const DELIMITER: &'static str = "@";
 
-    async fn connect<'c>(&'c self) -> Result<Self::Connection<'c>, anyhow::Error>;
+    async fn connect<'c>(&'c self) -> anyhow::Result<Self::Connection<'c>>;
 }
 
 /// Extends the Store trait with transactional capabilities, to be used within the framework for
@@ -212,7 +228,7 @@ impl PrunerWatermark {
 pub fn pipeline_task<S: Store>(
     pipeline_name: &'static str,
     task_name: Option<&str>,
-) -> Result<String> {
+) -> anyhow::Result<String> {
     if pipeline_name.contains(S::DELIMITER) {
         anyhow::bail!(
             "Pipeline name '{}' contains invalid delimiter '{}'",
