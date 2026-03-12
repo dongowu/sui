@@ -233,6 +233,65 @@ Returns the current state of margin managers. This endpoint is useful for monito
 
 </details>
 
+<details>
+<summary>Get portfolio for a wallet</summary>
+
+```http
+/portfolio/:wallet_address
+```
+
+Returns a complete portfolio view for a wallet address, including margin positions, collateral balances, LP positions, and an overall summary. The wallet address should be a 0x-prefixed hex string.
+
+#### Response
+
+```json
+{
+    "margin_positions": [
+        {
+            "margin_manager_id": "0x1234...",
+            "pool": "SUI_USDC",
+            "base_asset_symbol": "SUI",
+            "quote_asset_symbol": "USDC",
+            "base_asset": 100.0,
+            "quote_asset": 50.0,
+            "base_debt": 80.0,
+            "quote_debt": 0.0,
+            "base_asset_usd": 200.0,
+            "quote_asset_usd": 50.0,
+            "base_debt_usd": 160.0,
+            "quote_debt_usd": 0.0,
+            "total_debt_usd": 160.0,
+            "net_value_usd": 90.0,
+            "risk_ratio": 1.5625
+        }
+    ],
+    "collateral_balances": [
+        {
+            "asset": "USDC",
+            "balance": 100.0,
+            "balance_usd": 100.0
+        }
+    ],
+    "lp_positions": [
+        {
+            "margin_pool_id": "0x5678...",
+            "asset": "SUI",
+            "supplied": 500.0,
+            "shares": 500000000000,
+            "supplied_usd": 1000.0
+        }
+    ],
+    "summary": {
+        "total_equity_usd": 1250.0,
+        "total_debt_usd": 160.0,
+        "net_value_usd": 1090.0,
+        "risk_ratio": 7.8125
+    }
+}
+```
+
+</details>
+
 ## Margin pool endpoints
 
 <details>
@@ -607,6 +666,28 @@ Returns events for when collateral is deposited or withdrawn from margin manager
     }
 ]
 ```
+
+</details>
+
+<details>
+<summary>Get margin pool total supply</summary>
+
+```http
+/margin_supply
+```
+
+Returns the total supply for all margin pools by querying on-chain state.
+
+#### Response
+
+```json
+{
+    "0x53041c6f86c4782aabbfc1d4fe234a6d37160310c7ee740c915f0a01b7127344": 500000000000000,
+    "0xba473d9ae278f10af75c50a8fa341e9c6a1c087dc91a3f23e8048baf67d0754f": 1000000000000
+}
+```
+
+Each key is a margin pool ID and the value is the total supply in the smallest unit of the pool's asset.
 
 </details>
 

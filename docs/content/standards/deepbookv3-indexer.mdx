@@ -70,6 +70,8 @@ Following are the decimal places (scalars) used to determine the base unit for e
 | SEND | 6 |
 | SUI | 9 |
 | TYPUS | 9 |
+| SUIUSDE | 6 |
+| USDSUI | 6 |
 | WAL | 9 |
 | Wormhole USDC (WUSDC) | 6 |
 | Wormhole USDT (WUSDT) | 6 |
@@ -1039,6 +1041,69 @@ Returns events for referral fees earned during trading. These events track fees 
         "deep_fee": 250000
     }
 ]
+```
+
+</details>
+
+<details>
+<summary>Get pool creation events</summary>
+
+```http
+/pool_created
+```
+
+Returns all pool creation events with their initial parameters.
+
+#### Response
+
+```json
+[
+    {
+        "event_digest": "0xabc123...",
+        "digest": "0xdef456...",
+        "sender": "0x1111...",
+        "checkpoint": 12345678,
+        "checkpoint_timestamp_ms": 1738000000000,
+        "package": "0x2222...",
+        "pool_id": "0x1234...",
+        "taker_fee": 10,
+        "maker_fee": 5,
+        "tick_size": 100,
+        "lot_size": 100000000,
+        "min_size": 1000000000,
+        "whitelisted_pool": false,
+        "treasury_address": "0xabcd..."
+    }
+]
+```
+
+</details>
+
+<details>
+<summary>Get book parameters updated events</summary>
+
+```http
+/book_params_updated?pool_id=<ID>
+```
+
+Returns the latest book parameter update event for a specific pool. This tracks changes to tick size, lot size, and min size.
+
+#### Response
+
+```json
+{
+    "event_digest": "0xabc123...",
+    "digest": "0xdef456...",
+    "sender": "0x1111...",
+    "checkpoint": 12345678,
+    "checkpoint_timestamp_ms": 1738000000000,
+    "package": "0x2222...",
+    "pool_id": "0x1234...",
+    "tick_size": 100,
+    "lot_size": 100000000,
+    "min_size": 1000000000,
+    "onchain_timestamp": 1738000000000
+}
 ```
 
 </details>
